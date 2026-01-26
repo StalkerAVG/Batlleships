@@ -26,7 +26,7 @@
 #define K_FACTOR 32
 
 typedef enum { EMPTY, SHIP, HIT, MISS, SUNK } CellState;
-typedef enum { LOGIN, SPECTATOR, WAITING_FOR_OPPONENT, PLACING_SHIPS, READY, PLAYING, GAME_OVER, QUIT } ClientState;
+typedef enum { LOGIN, SPECTATING, WAITING_FOR_OPPONENT, PLACING_SHIPS, READY, PLAYING, GAME_OVER, QUIT } ClientState;
 
 typedef struct {
     int socket;
@@ -35,6 +35,7 @@ typedef struct {
     char opponentView[BOARD_SIZE][BOARD_SIZE];
     int shipsRemaining;
     int playerID;
+    int spectatingGameID;
     int ammountOfCarriers = 0;      // max 1 (4 cells)
     int ammountOfBattleships = 0;   // max 2 (3 cells)
     int ammountOfDestroyers = 0;    // max 3 (2 cells)
@@ -114,6 +115,70 @@ bool is_ship_sunk(char board[][BOARD_SIZE], int x, int y) {
     }
     return true;
 }
+
+void append_board(char *out, char board[BOARD_SIZE][BOARD_SIZE]) {
+    char line[100];
+    for (int i = 0; i < BOARD_SIZE; i++) {
+        for (int j = 0; j < BOARD_SIZE; j++) {
+            snprintf(line, sizeof(line), "%d ", board[i][j]);
+            strcat(out, line);
+        }
+        strcat(out, "\n");
+    }
+}
+
+
+void send_full_table_to_spectators(Game *game) {
+    char msg[4096];
+    msg[0] = '\0';
+
+    strcat(msg, "SPEC_TABLE\n");
+
+    strcat(msg, "P1|");
+    strcat(msg, game->player1->name);
+    strcat(msg, "\nBOARD\n");
+    append_board(msg, game->player1->myView);
+
+    strcat(msg, "P2|");
+    strcat(msg, game->player2->name);
+    strcat(msg, "\nBOARD\n");
+    append_board(msg, game->player2->myView);
+
+    strcat(msg, "END\n");
+
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].socket > 0 &&
+            clients[i].state == SPECTATING &&
+            clients[i].spectatingGameID == game->gameID) {
+
+            send(clients[i].socket, msg, strlen(msg), 0);
+        }
+    }
+}
+
+
+void debug_print_player(const char *username) {
+    sqlite3_stmt *stmt;
+    const char *sql =
+        "SELECT elo, wins, losses, total_games FROM players WHERE username=?";
+
+    sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
+    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        printf("[DB CHECK] %s -> ELO=%d W=%d L=%d G=%d\n",
+               username,
+               sqlite3_column_int(stmt, 0),
+               sqlite3_column_int(stmt, 1),
+               sqlite3_column_int(stmt, 2),
+               sqlite3_column_int(stmt, 3));
+    } else {
+        printf("[DB CHECK] No row found for user: %s\n", username);
+    }
+
+    sqlite3_finalize(stmt);
+}
+
 
 int main() {
     int maxfd, connfd;
@@ -198,6 +263,7 @@ int main() {
                 clients[slot].state = WAITING_FOR_OPPONENT;
                 clients[slot].playerID = slot + 1;
                 clients[slot].shipsRemaining = MAX_SHIPS;
+                clients[slot].spectatingGameID = -1;
                 initialize_board(clients[slot].myView);
                 initialize_board(clients[slot].opponentView);
 
@@ -289,6 +355,12 @@ int handle_client_message(Client *client, char *buffer) {
     char orientation;
 
     if(strncmp(buffer, "LOGIN|", 6) == 0){
+        
+        if(client -> state == SPECTATING){
+            send(client->socket, "ERROR|Spectators cannot act\n", 28, 0);
+            return 0;
+        }
+
         char username [50];
         sscanf(buffer + 6, "%s", username);
         strcpy(client->name, username);
@@ -299,7 +371,47 @@ int handle_client_message(Client *client, char *buffer) {
         send(client->socket, response, strlen(response), 0);
     }
 
+    else if(strncmp(buffer, "SPECTATE|", 8) == 0){
+        int gameID;
+        sscanf(buffer + 9, "%d", &gameID);
+        for (int i = 0; i < numGames; i++) {
+            if (games[i].gameID == gameID) {
+                client->state = SPECTATING;
+                client->spectatingGameID = gameID;
+                send(client->socket, "SPECTATE_OK\n", 12, 0);
+                printf("Client %d is now spectating Game %d\n",
+                    client->playerID, gameID);
+                return 0;
+            }
+        }
+        send(client->socket, "ERROR|Game not found\n", 21, 0);
+    }
+
+    else if (strncmp(buffer, "LIST_GAMES", 10) == 0) {
+        char msg[512] = "GAMES_LIST\n";
+
+        for (int i = 0; i < numGames; i++) {
+            char line[64];
+            snprintf(line, sizeof(line),
+                    "GAME|%d|P1:%s|P2:%s\n",
+                    games[i].gameID,
+                    games[i].player1->name,
+                    games[i].player2->name);
+
+            strcat(msg, line);
+        }
+
+        send(client->socket, msg, strlen(msg), 0);
+    }
+
+
     else if (strncmp(buffer, "PLACE_SHIP|", 11) == 0) {
+        
+        if(client -> state == SPECTATING){
+            send(client->socket, "ERROR|Spectators cannot act\n", 28, 0);
+            return 0;
+        }
+
         sscanf(buffer + 11, "%d,%d,%d,%c", &x, &y, &length, &orientation);
         char normOri = toupper(orientation);
 
@@ -327,7 +439,8 @@ int handle_client_message(Client *client, char *buffer) {
                 return -1;
             }
             client->ammountOfSubmarines++;
-        } else {
+        } 
+        else {
             send(client->socket, "ERROR|Invalid ship length\n", 26, 0);
             return -1;
         }
@@ -399,6 +512,12 @@ int handle_client_message(Client *client, char *buffer) {
     } 
 
     else if(strncmp(buffer, "READY", 5) == 0) {
+        
+        if(client -> state == SPECTATING){
+            send(client->socket, "ERROR|Spectators cannot act\n", 28, 0);
+            return 0;
+        }
+
         client->state = READY;
         send(client->socket, "STATUS|READY\n", 14, 0);
         printf("Player %d is ready.\n", client->playerID);
@@ -426,6 +545,12 @@ int handle_client_message(Client *client, char *buffer) {
     }
 
     else if (strncmp(buffer, "FIRE|", 5) == 0) {
+
+        if(client -> state == SPECTATING){
+            send(client->socket, "ERROR|Spectators cannot act\n", 28, 0);
+            return 0;
+        }
+
         sscanf(buffer + 5, "%d,%d", &x, &y);
 
         Game *myGame = NULL;
@@ -488,6 +613,11 @@ int handle_client_message(Client *client, char *buffer) {
                     printf("New ELO - Player %d: %d, Player %d: %d\n", 
                            client->playerID, client->elo, opponent->playerID, opponent->elo);
                     save_game_result(client, opponent);
+                    debug_print_player(client->name);
+                    debug_print_player(opponent->name);
+
+                    send_full_table_to_spectators(myGame);
+
                     return 0;
                 }
             }
@@ -509,6 +639,8 @@ int handle_client_message(Client *client, char *buffer) {
             send(myGame->player2->socket, "TURN|YOURS\n", 11, 0);
             send(myGame->player1->socket, "TURN|OPPONENT\n", 14, 0);
         }
+
+        send_full_table_to_spectators(myGame);
     }
     else {
         send(client->socket, "ERROR|Unknown command\n", 22, 0);
@@ -526,10 +658,11 @@ void init_db() {
     char *errMsg = 0;
     const char *sql = "CREATE TABLE IF NOT EXISTS players ("
                       "username TEXT PRIMARY KEY,"
-                      "elo INTIGER DEFAULT 1000,"
-                      "wins INTIGER DEFAULT 0,"
-                      "losses INTIGER DEFAULT 0,"
-                      "total games INTIGER DEFAULT 0)";
+                      "elo INTEGER DEFAULT 1000,"
+                      "wins INTEGER DEFAULT 0,"
+                      "losses INTEGER DEFAULT 0,"
+                      "total_games INTEGER DEFAULT 0)";
+
 
     if (sqlite3_exec(db, sql, 0, 0, &errMsg) != SQLITE_OK) {
         fprintf(stderr, "SQL Error: %s\n", errMsg);
