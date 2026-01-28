@@ -381,6 +381,9 @@ int handle_client_message(Client *client, char *buffer) {
                 send(client->socket, "SPECTATE_OK\n", 12, 0);
                 printf("Client %d is now spectating Game %d\n",
                     client->playerID, gameID);
+					
+		send_full_table_to_spectators(&games[i]);
+				
                 return 0;
             }
         }

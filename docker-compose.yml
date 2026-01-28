@@ -63,6 +63,26 @@ services:
       - .:/data
     command: tail -f /dev/null
 
+  machine4:
+    container_name: machine_4
+    image: ps/custom_debian:12
+    networks:
+      machines-private-network:
+        ipv4_address: 192.168.56.5
+        ipv6_address: fc00:1::5
+      machines-private-network2:
+        ipv4_address: 192.168.1.5
+        ipv6_address: fc00:2::5
+      nat_network:
+    privileged: true
+    sysctls:
+      - net.ipv4.ip_local_port_range=1024 65535
+      - net.ipv4.tcp_fin_timeout=15
+      - net.ipv4.tcp_tw_reuse=1
+    volumes:
+      - .:/data
+    command: tail -f /dev/null
+    
 networks:
   machines-private-network:
     driver: bridge

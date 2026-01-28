@@ -187,31 +187,36 @@ void draw_shooting_board(char board[ROWS][COLS], int cursor_y, int cursor_x) {
     refresh();
 }
 
-struct coordinates_pair choose_shot(char fight_board[ROWS][COLS]) {
+struct coordinates_pair choose_shot(char my_board[ROWS][COLS], char fight_board[ROWS][COLS]) {
     int cursor_y = 0;
     int cursor_x = 0;
     int ch;
     
     while (true) {
-        draw_shooting_board(fight_board, cursor_y, cursor_x);
+        draw_battle_screen(my_board, fight_board);
+
+        attron(A_BOLD);
+        mvprintw(0, 0, "--- YOUR TURN: FIRE! ---");
+        mvprintw(1, 0, "Arrow Keys: Aim | Space: Shooooot");
+        attroff(A_BOLD);
+
+        int screen_y = 4 + cursor_y;
+        int screen_x = 44 + (cursor_x * 2);
+
+        attron(COLOR_PAIR(COLOR_HOVER) | A_BOLD);
+        mvprintw(screen_y, screen_x, "+");
+        attroff(COLOR_PAIR(COLOR_HOVER) | A_BOLD);
+
+        refresh();
         
         ch = getch();
         switch (ch) {
-            case KEY_UP:
-                if (cursor_y > 0) cursor_y--;
-                break;
-            case KEY_DOWN:
-                if (cursor_y < ROWS - 1) cursor_y++;
-                break;
-            case KEY_LEFT: 
-                if (cursor_x > 0) cursor_x--;
-                break;
-            case KEY_RIGHT:
-                if (cursor_x < COLS - 1) cursor_x++;
-                break;
+            case KEY_UP:    if (cursor_y > 0) cursor_y--; break;
+            case KEY_DOWN:  if (cursor_y < ROWS - 1) cursor_y++; break;
+            case KEY_LEFT:  if (cursor_x > 0) cursor_x--; break;
+            case KEY_RIGHT: if (cursor_x < COLS - 1) cursor_x++; break;
             case ' ':
-            case '\n':{
-                // prevent shooting same spot twice
+            case '\n': {
                 if (fight_board[cursor_y][cursor_x] == 'X' || 
                     fight_board[cursor_y][cursor_x] == 'O') {
                     flash();
@@ -219,7 +224,7 @@ struct coordinates_pair choose_shot(char fight_board[ROWS][COLS]) {
                 }
                 struct coordinates_pair shot = {cursor_y, cursor_x};
                 return shot;
-			}
+            }
             case 'q': {
                 struct coordinates_pair quit = {-1, -1};
                 return quit;
@@ -245,5 +250,36 @@ void update_fight_board(char fight_board[ROWS][COLS], int row, int col, bool hit
 void draw_waiting_screen(const char* message) {
     clear();
     mvprintw(ROWS / 2, (COLS * 2) / 2 - 10, "%s", message);
+    refresh();
+}
+
+void draw_spectator_board(char p1_board[ROWS][COLS], char p2_board[ROWS][COLS], char* p1_name, char* p2_name) {
+    clear();
+    mvprintw(1, 5, "PLAYER 1: %s", p1_name);
+    mvprintw(1, 45, "PLAYER 2: %s", p2_name);
+
+    mvprintw(3, 4, "0 1 2 3 4 5 6 7 8 9");
+    mvprintw(3, 44, "0 1 2 3 4 5 6 7 8 9");
+
+    for (int r = 0; r < ROWS; r++) {
+        mvprintw(4 + r, 0, "%c", 'A' + r);
+        mvprintw(4 + r, 40, "%c", 'A' + r);
+
+        for (int c = 0; c < COLS; c++) {
+            char cell = p1_board[r][c];
+            int color = (cell == 'X') ? COLOR_HIT : (cell == 'S' ? COLOR_SHIP : (cell == 'O' ? COLOR_MISS : COLOR_WATER));
+            attron(COLOR_PAIR(color));
+            mvprintw(4 + r, 4 + (c * 2), "%c", cell); 
+            attroff(COLOR_PAIR(color));
+        }
+
+        for (int c = 0; c < COLS; c++) {
+            char cell = p2_board[r][c];
+            int color = (cell == 'X') ? COLOR_HIT : (cell == 'S' ? COLOR_SHIP : (cell == 'O' ? COLOR_MISS : COLOR_WATER));
+            attron(COLOR_PAIR(color));
+            mvprintw(4 + r, 44 + (c * 2), "%c", cell); 
+            attroff(COLOR_PAIR(color));
+        }
+    }
     refresh();
 }
