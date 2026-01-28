@@ -581,12 +581,13 @@ int handle_client_message(Client *client, char *buffer) {
 
         char response[50] = "MISS\n";
         char oppMsg[50] = "OPP_MISSED\n";
+		snprintf(oppMsg, sizeof(oppMsg), "OPP_MISSED|%d,%d\n", x, y);
 
         if (opponent->myView[x][y] == SHIP) {
             opponent->myView[x][y] = HIT;
             client->opponentView[x][y] = HIT;
             strcpy(response, "HIT\n");
-            strcpy(oppMsg, "YOUR_SHIP_HIT\n");
+			snprintf(oppMsg, sizeof(oppMsg), "YOUR_SHIP_HIT|%d,%d\n", x, y);
             
             if (is_ship_sunk(opponent->myView, x, y)) {
                 opponent->shipsRemaining--;
@@ -602,7 +603,7 @@ int handle_client_message(Client *client, char *buffer) {
                 }
 
                 strcpy(response, "SUNK\n");
-                strcpy(oppMsg, "YOUR_SHIP_SUNK\n");
+				snprintf(oppMsg, sizeof(oppMsg), "YOUR_SHIP_SUNK|%d,%d\n", x, y);
                 if (opponent->shipsRemaining == 0) {
                      strcpy(response, "YOU_WIN\n");
                      strcpy(oppMsg, "YOU_LOSE\n");
